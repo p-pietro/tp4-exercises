@@ -28,3 +28,7 @@ venv.bak/
 
 # Octave workspace
 octave-workspace
+
+build/
+*.pyc
+*/__pycache__/
