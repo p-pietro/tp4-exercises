@@ -4,6 +4,7 @@
 #include <Eigen/Dense>
 #include <complex>
 #include <iostream>
+#include <random>
 #include <vector>
 
 using namespace Eigen;
@@ -32,9 +33,8 @@ VectorXcd integrate(const MatrixXcd &H, const VectorXcd &psi0, double t_span,
   gsl_odeiv2_system sys = {schrodinger_eq, nullptr, H.rows() * 2,
                            new Params{H}};
   gsl_odeiv2_driver *d = gsl_odeiv2_driver_alloc_y_new(
-      &sys, gsl_odeiv2_step_rk8pd, 1e-6, 1e-6, 0.0);
+      &sys, gsl_odeiv2_step_msadams, 1e-8, 1e-8, 1e-6);
   VectorXcd psi = psi0;
-  double t = 0.0;
   double y[psi.size() * 2];
   for (int i = 0; i < psi.size(); ++i) {
     y[2 * i] = real(psi[i]);
@@ -82,9 +82,12 @@ MatrixXcd determine_jump(const vector<MatrixXcd> &c_ops, const VectorXcd &psi,
 vector<VectorXcd> montecarlo(const MatrixXcd &H, const vector<MatrixXcd> &c_ops,
                              const VectorXcd &psi0, const vector<double> &tlist,
                              unsigned int seed = 0) {
-  if (seed != 0) {
-    srand(seed);
+  if (seed == 0) {
+    std::random_device rd;
+    seed = rd();
   }
+  std::mt19937 gen(seed);
+  std::uniform_real_distribution<> dis(0.0, 1.0);
 
   MatrixXcd H_eff = H;
   for (const auto &c_op : c_ops) {
@@ -95,8 +98,8 @@ vector<VectorXcd> montecarlo(const MatrixXcd &H, const vector<MatrixXcd> &c_ops,
   vector<VectorXcd> psi_j;
   psi_j.push_back(psi);
   double t_prev = tlist[0];
-  double r1 = (double)rand() / RAND_MAX;
-  double r2 = (double)rand() / RAND_MAX;
+  double r1 = dis(gen);
+  double r2 = dis(gen);
 
   for (size_t t_idx = 1; t_idx < tlist.size(); ++t_idx) {
     double t_span = t_prev;
@@ -108,8 +111,8 @@ vector<VectorXcd> montecarlo(const MatrixXcd &H, const vector<MatrixXcd> &c_ops,
     if (norm_sq <= r1) {
       MatrixXcd jump = determine_jump(c_ops, psi, r2);
       psi = jump * psi / (jump * psi).norm();
-      r1 = (double)rand() / RAND_MAX;
-      r2 = (double)rand() / RAND_MAX;
+      r1 = dis(gen);
+      r2 = dis(gen);
     }
 
     t_prev = t_eval;

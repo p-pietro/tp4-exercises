@@ -10,7 +10,9 @@ def schrodinger_eq(t, psi, H):
 
 class Integrator:
     def __init__(self, use_ode=True):
-        self.solver = ode(schrodinger_eq).set_integrator("zvode", method="adams")
+        self.solver = ode(schrodinger_eq).set_integrator(
+            "zvode", method="adams", atol=1e-8, rtol=1e-6, first_step=1e-8
+        )
         self.use_ode = use_ode
 
     def integrate(self, H, psi0, t_span, t_eval):
