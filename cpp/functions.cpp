@@ -15,7 +15,7 @@ using namespace std;
 typedef Matrix<complex<double>, Dynamic, Dynamic> MatrixXcd;
 typedef Matrix<complex<double>, Dynamic, 1> VectorXcd;
 
-double prand(boost::random::mt19937 &gen) {
+double prand(boost::random::mt19937 &gen) {  // simulate numpy random.rand()
   int a = gen() >> 5;
   int b = gen() >> 6;
   return (a * 67108864.0 + b) / 9007199254740992.0;
@@ -25,41 +25,50 @@ struct Params {
   MatrixXcd H;
 };
 
-int schrodinger_eq(double t, const double y[], double f[], void *params) {
-  Params *p = (Params *)params;
-  VectorXcd psi(p->H.rows());
-  for (int i = 0; i < p->H.rows(); ++i) {
-    psi[i] = complex<double>(y[2 * i], y[2 * i + 1]);
-  }
+int schrodinger_eq([[maybe_unused]] double t, const double y[], double f[],
+                   void *params) {
+  Params *p = static_cast<Params *>(params);
+
+  Map<const VectorXcd> psi(reinterpret_cast<const complex<double> *>(y),
+                           p->H.rows());
   Map<VectorXcd> dpsi_dt(reinterpret_cast<complex<double> *>(f), p->H.rows());
   dpsi_dt = -1i * p->H * psi;
+
   return GSL_SUCCESS;
 }
 
 VectorXcd integrate(const MatrixXcd &H, const VectorXcd &psi0, double t_span,
                     double t_eval, bool use_ode = true) {
   VectorXcd psi = psi0;
-  if (use_ode) {
-    gsl_odeiv2_system sys = {schrodinger_eq, nullptr, H.rows() * 2,
-                             new Params{H}};
-    gsl_odeiv2_driver *d = gsl_odeiv2_driver_alloc_y_new(
-        &sys, gsl_odeiv2_step_msadams, 1e-8, 1e-8, 1e-6);
-    double y[psi.size() * 2];
-    for (int i = 0; i < psi.size(); ++i) {
-      y[2 * i] = real(psi[i]);
-      y[2 * i + 1] = imag(psi[i]);
-    }
-    gsl_odeiv2_driver_apply(d, &t_span, t_eval, y);
-    for (int i = 0; i < psi.size(); ++i) {
-      psi[i] = complex<double>(y[2 * i], y[2 * i + 1]);
-    }
-    gsl_odeiv2_driver_free(d);
-    delete (Params *)sys.params;
-  } else {
-    auto dt = t_eval - t_span;
-    MatrixXcd U = (-1i * H * dt).exp();
-    psi = U * psi;
+
+  if (!use_ode) {
+    double dt = t_eval - t_span;
+    psi = (-1i * H * dt).exp() * psi;
+    return psi;
   }
+
+  size_t n = psi.size();
+
+  // Prepare the GSL system
+  gsl_odeiv2_system sys = {schrodinger_eq, nullptr, n * 2, new Params{H}};
+  gsl_odeiv2_driver *d = gsl_odeiv2_driver_alloc_y_new(
+      &sys, gsl_odeiv2_step_msadams, 1e-8, 1e-8, 1e-6);
+
+  // Map psi to a double array without copying
+  Map<const VectorXd> y_input(reinterpret_cast<const double *>(psi.data()),
+                              n * 2);
+
+  std::vector<double> y(y_input.data(), y_input.data() + n * 2);
+  gsl_odeiv2_driver_apply(d, &t_span, t_eval, y.data());
+
+  // Map y back to psi without copying
+  Map<VectorXcd> psi_result(reinterpret_cast<std::complex<double> *>(y.data()),
+                            n);
+  psi = psi_result;
+
+  gsl_odeiv2_driver_free(d);
+  delete static_cast<Params *>(sys.params);
+
   return psi;
 }
 
@@ -69,16 +78,6 @@ MatrixXcd kroneckerProduct(const MatrixXcd &A, const MatrixXcd &B) {
     for (int j = 0; j < A.cols(); ++j) {
       result.block(i * B.rows(), j * B.cols(), B.rows(), B.cols()) =
           A(i, j) * B;
-    }
-  }
-  return result;
-}
-
-VectorXcd vkroneckerProduct(const VectorXcd &A, const VectorXcd &B) {
-  VectorXcd result(A.size() * B.size());
-  for (int i = 0; i < A.size(); ++i) {
-    for (int j = 0; j < B.size(); ++j) {
-      result[i * B.size() + j] = A[i] * B[j];
     }
   }
   return result;
@@ -117,13 +116,22 @@ vector<VectorXcd> montecarlo(const MatrixXcd &H, const vector<MatrixXcd> &c_ops,
     H_eff -= 0.5i * c_op.adjoint() * c_op;
   }
 
-  VectorXcd psi = psi0 / psi0.norm();
+  VectorXcd psi = psi0.normalized();
   vector<VectorXcd> psi_j;
   psi_j.reserve(tlist.size());
   psi_j.push_back(psi);
   double t_prev = tlist[0];
   double r1 = prand(gen);
   double r2 = prand(gen);
+
+  /*
+  // Precompute the unitary evolution operator
+  MatrixXcd U;
+  if (!use_ode) {
+    double dt = tlist[1] - tlist[0];  // Assuming uniform time steps
+    U = (-1i * H_eff * dt).exp();
+  }
+  */
 
   for (size_t t_idx = 1; t_idx < tlist.size(); ++t_idx) {
     double t_span = t_prev;
@@ -134,7 +142,7 @@ vector<VectorXcd> montecarlo(const MatrixXcd &H, const vector<MatrixXcd> &c_ops,
     double norm_sq = psi.squaredNorm();
     if (norm_sq <= r1) {
       MatrixXcd jump = determine_jump(c_ops, psi, r2);
-      psi = jump * psi / (jump * psi).norm();
+      psi = (jump * psi).normalized();
       r1 = prand(gen);
       r2 = prand(gen);
     }
@@ -155,8 +163,8 @@ vector<complex<double>> montecarlo_average(
   for (int i = 0; i < ntraj; ++i) {
     auto result{montecarlo(H, c_ops, psi0, tlist, seed + i, use_ode)};
     for (size_t i = 0; i < t_size; ++i) {
-      averages[i] +=
-          (result[i].adjoint() * op * result[i])(0, 0) / result[i].squaredNorm();
+      averages[i] += (result[i].adjoint() * op * result[i])(0, 0) /
+                     result[i].squaredNorm();
     }
   }
 

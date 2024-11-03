@@ -74,7 +74,7 @@ int main(int argc, char* argv[]) {
   psi0_c(0) = std::complex<double>(1.0, 0.0);
   VectorXcd psi0_a = VectorXcd::Zero(2, 1);
   psi0_a(1) = std::complex<double>(1.0, 0.0);
-  VectorXcd psi0 = vkroneckerProduct(psi0_c, psi0_a).eval();
+  VectorXcd psi0 = kroneckerProduct(psi0_c, psi0_a).eval();
 
   MatrixXcd a = MatrixXcd::Zero(N, N);
   for (int n = 1; n < N; ++n) {
