@@ -3,9 +3,11 @@
 #include <matplot/matplot.h>
 
 #include <Eigen/Dense>
+#include <boost/program_options.hpp>
 #include <chrono>
 #include <complex>
 #include <iostream>
+#include <numbers>
 #include <vector>
 
 #include "functions.h"
@@ -21,46 +23,58 @@ struct Params {
   MatrixXcd H;
 };
 
-/*
-int schrodinger_eq(double t, const double y[], double f[], void *params) {
-    Params *p = (Params *)params;
-    Map<const VectorXcd> psi(reinterpret_cast<const complex<double>*>(y),
-p->H.rows()); Map<VectorXcd> dpsi_dt(reinterpret_cast<complex<double>*>(f),
-p->H.rows()); dpsi_dt = -1i * p->H * psi; return GSL_SUCCESS;
-}
-*/
+int main(int argc, char* argv[]) {
+  // Define variables with default values
+  int N = 2;
+  double wc = 1.0e-3 * 2 * std::numbers::pi;
+  double wa = wc;
+  double g = 0.05 * 2 * std::numbers::pi;
+  double kappa = 0.005;
+  double gamma = 0.05;
+  double n_th_a = 0.1;
+  int n_times = 1000;
+  int n_traj = 500;
+  double time_f = 50.0;
+  int seed = 0;
 
-/*
-VectorXcd integrate(const MatrixXcd &H, const VectorXcd &psi0, double t_span,
-double t_eval) { gsl_odeiv2_system sys = {schrodinger_eq, nullptr, H.rows() * 2,
-new Params{H}}; gsl_odeiv2_driver *d = gsl_odeiv2_driver_alloc_y_new(&sys,
-gsl_odeiv2_step_rk8pd, 1e-6, 1e-6, 0.0); VectorXcd psi = psi0; double t = 0.0;
-    double y[psi.size() * 2];
-    for (int i = 0; i < psi.size(); ++i) {
-        y[2 * i] = real(psi[i]);
-        y[2 * i + 1] = imag(psi[i]);
-    }
-    gsl_odeiv2_driver_apply(d, &t, t_eval, y);
-    for (int i = 0; i < psi.size(); ++i) {
-        psi[i] = complex<double>(y[2 * i], y[2 * i + 1]);
-    }
-    gsl_odeiv2_driver_free(d);
-    delete (Params *)sys.params;
-    return psi;
-}
-*/
+  // Set up Boost Program Options
+  namespace po = boost::program_options;
+  po::options_description desc("Allowed options");
+  desc.add_options()("help", "produce help message")(
+      "N", po::value<int>(&N)->default_value(N), "value of N")(
+      "wc", po::value<double>(&wc)->default_value(wc), "value of wc")(
+      "wa", po::value<double>(&wa)->default_value(wa), "value of wa")(
+      "g", po::value<double>(&g)->default_value(g), "value of g")(
+      "kappa", po::value<double>(&kappa)->default_value(kappa),
+      "value of kappa")("gamma",
+                        po::value<double>(&gamma)->default_value(gamma),
+                        "value of gamma")(
+      "n_th_a", po::value<double>(&n_th_a)->default_value(n_th_a),
+      "value of n_th_a")("n_times",
+                         po::value<int>(&n_times)->default_value(n_times),
+                         "number of times")(
+      "n_traj", po::value<int>(&n_traj)->default_value(n_traj),
+      "number of trajectories")(
+      "time_f", po::value<double>(&time_f)->default_value(time_f),
+      "final time")("seed", po::value<int>(&seed)->default_value(seed),
+                    "random seed");
 
-int main() {
-  const int N = 2;
-  const double wc = 1.0e-3 * 2 * M_PI;
-  const double wa = wc;
-  const double g = 0.05 * 2 * M_PI;
-  const double kappa = 0.005;
-  const double gamma = 0.05;
-  const double n_th_a = 0.1;
+  // Parse command line arguments
+  po::variables_map vm;
+  po::store(po::parse_command_line(argc, argv, desc), vm);
+  po::notify(vm);
 
-  VectorXcd psi0(4);
-  psi0 << 0, 1, 0, 0;
+  // Display help message if needed
+  if (vm.count("help")) {
+    std::cout << desc << "\n";
+    return 1;
+  }
+
+  VectorXcd psi0_c = VectorXcd::Zero(N, 1);
+  psi0_c(0) = std::complex<double>(1.0, 0.0);
+  VectorXcd psi0_a = VectorXcd::Zero(2, 1);
+  psi0_a(1) = std::complex<double>(1.0, 0.0);
+  VectorXcd psi0 = vkroneckerProduct(psi0_c, psi0_a).eval();
 
   MatrixXcd a = MatrixXcd::Zero(N, N);
   for (int n = 1; n < N; ++n) {
@@ -95,39 +109,55 @@ int main() {
   c_op_list.push_back(sqrt(gamma * (1 + n_th_a)) * sm);
   c_op_list.push_back(sqrt(gamma * n_th_a) * sp);
 
-  vector<double> times(100000);
-  for (int i = 0; i < times.size(); ++i) {
-    times[i] = i * 250.0 / (times.size() - 1);
+  auto e_op = sp * sm;
+
+  vector<double> times(n_times, 0);
+  for (int i = 0; i < n_times; ++i) {
+    times[i] = i * time_f / (times.size() - 1);
   }
 
   auto start_time1 = high_resolution_clock::now();
-  auto result_ode = montecarlo(H, c_op_list, psi0, times, 42, true);
+  // auto result_ode = montecarlo(H, c_op_list, psi0, times, 42, true);
+  auto result_ode =
+      montecarlo_average(H, c_op_list, psi0, times, n_traj, e_op, seed, true);
   auto end_time1 = high_resolution_clock::now();
   cout << "Time taken using GSL: "
        << duration_cast<milliseconds>(end_time1 - start_time1).count()
        << " milliseconds" << endl;
 
   auto start_time2 = high_resolution_clock::now();
-  auto result_exp = montecarlo(H, c_op_list, psi0, times, 42, false);
+  // auto result_exp = montecarlo(H, c_op_list, psi0, times, 42, false);
+  auto result_exp =
+      montecarlo_average(H, c_op_list, psi0, times, n_traj, e_op, seed, false);
   auto end_time2 = high_resolution_clock::now();
   cout << "Time taken using matrix exponentiation: "
        << duration_cast<milliseconds>(end_time2 - start_time2).count()
        << " milliseconds" << endl;
 
-  vector<double> norms_ode;
-  for (const auto& psi : result_ode) {
-    norms_ode.push_back(psi.squaredNorm());
-  }
-  vector<double> norms_exp;
-  for (const auto& psi : result_exp) {
-    norms_exp.push_back(psi.squaredNorm());
-  }
+  /*
+    vector<double> norms_ode;
+    for (const auto& psi : result_ode) {
+      norms_ode.push_back(psi.squaredNorm());
+    }
+    vector<double> norms_exp;
+    for (const auto& psi : result_exp) {
+      norms_exp.push_back(psi.squaredNorm());
+    }
+  */
 
   using namespace matplot;
 
-  plot(times, norms_ode, "-r", times, norms_exp, "-b");
+  vector<double> result_ode_real(result_ode.size());
+  for (size_t i = 0; i < result_ode.size(); ++i) {
+    result_ode_real[i] = result_ode[i].real();
+  }
+  vector<double> result_exp_real(result_exp.size());
+  for (size_t i = 0; i < result_exp.size(); ++i) {
+    result_exp_real[i] = result_exp[i].real();
+  }
+  plot(times, result_ode_real, "-r", times, result_exp_real, "-b");
   xlabel("Time");
-  ylabel("Norm of psi");
+  ylabel("P_e(t)");
   legend({"GSL", "Matrix Exponentiation"});
   show();
 

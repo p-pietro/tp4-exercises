@@ -74,6 +74,16 @@ MatrixXcd kroneckerProduct(const MatrixXcd &A, const MatrixXcd &B) {
   return result;
 }
 
+VectorXcd vkroneckerProduct(const VectorXcd &A, const VectorXcd &B) {
+  VectorXcd result(A.size() * B.size());
+  for (int i = 0; i < A.size(); ++i) {
+    for (int j = 0; j < B.size(); ++j) {
+      result[i * B.size() + j] = A[i] * B[j];
+    }
+  }
+  return result;
+}
+
 MatrixXcd determine_jump(const vector<MatrixXcd> &c_ops, const VectorXcd &psi,
                          double r2) {
   MatrixXcd jump;
@@ -109,6 +119,7 @@ vector<VectorXcd> montecarlo(const MatrixXcd &H, const vector<MatrixXcd> &c_ops,
 
   VectorXcd psi = psi0 / psi0.norm();
   vector<VectorXcd> psi_j;
+  psi_j.reserve(tlist.size());
   psi_j.push_back(psi);
   double t_prev = tlist[0];
   double r1 = prand(gen);
@@ -135,22 +146,20 @@ vector<VectorXcd> montecarlo(const MatrixXcd &H, const vector<MatrixXcd> &c_ops,
   return psi_j;
 }
 
-vector<complex<double>> montecarlo_average(const MatrixXcd &H,
-                                           const vector<MatrixXcd> &c_ops,
-                                           const VectorXcd &psi0,
-                                           const vector<double> &tlist,
-                                           int ntraj, const MatrixXcd &op) {
-  vector<vector<VectorXcd>> results;
+vector<complex<double>> montecarlo_average(
+    const MatrixXcd &H, const vector<MatrixXcd> &c_ops, const VectorXcd &psi0,
+    const vector<double> &tlist, size_t const ntraj, const MatrixXcd &op,
+    unsigned int seed = 0, bool use_ode = true) {
+  auto t_size{tlist.size()};
+  vector<complex<double>> averages(t_size, 0);
   for (int i = 0; i < ntraj; ++i) {
-    results.push_back(montecarlo(H, c_ops, psi0, tlist));
-  }
-  vector<complex<double>> averages(tlist.size(), 0);
-  for (const auto &result : results) {
-    for (size_t i = 0; i < result.size(); ++i) {
+    auto result{montecarlo(H, c_ops, psi0, tlist, seed + i, use_ode)};
+    for (size_t i = 0; i < t_size; ++i) {
       averages[i] +=
-          (result[i].adjoint() * op * result[i])(0, 0) / result[i].norm();
+          (result[i].adjoint() * op * result[i])(0, 0) / result[i].squaredNorm();
     }
   }
+
   for (auto &avg : averages) {
     avg /= ntraj;
   }

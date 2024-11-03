@@ -85,10 +85,12 @@ def montecarlo(H, c_ops, psi0, tlist, seed=None, use_ode=True):
     return psi_j
 
 
-def montecarlo_average(H, c_ops, psi0, tlist, ntraj, op):
+def montecarlo_average(H, c_ops, psi0, tlist, ntraj, op, seed=None, use_ode=True):
     results = []
     for i in range(ntraj):
-        results.append(montecarlo(H, c_ops, psi0, tlist))
+        results.append(
+            montecarlo(H, c_ops, psi0, tlist, use_ode=use_ode, seed=seed + i)
+        )
     for i in range(len(results)):
         results[i] = [
             psi.conj().T @ op @ psi / np.linalg.norm(psi) ** 2 for psi in results[i]
