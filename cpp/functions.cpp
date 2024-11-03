@@ -2,9 +2,11 @@
 #include <gsl/gsl_odeiv2.h>
 
 #include <Eigen/Dense>
+#include <boost/random.hpp>
 #include <complex>
 #include <iostream>
 #include <random>
+#include <unsupported/Eigen/MatrixFunctions>
 #include <vector>
 
 using namespace Eigen;
@@ -12,6 +14,12 @@ using namespace std;
 
 typedef Matrix<complex<double>, Dynamic, Dynamic> MatrixXcd;
 typedef Matrix<complex<double>, Dynamic, 1> VectorXcd;
+
+double prand(boost::random::mt19937 &gen) {
+  int a = gen() >> 5;
+  int b = gen() >> 6;
+  return (a * 67108864.0 + b) / 9007199254740992.0;
+}
 
 struct Params {
   MatrixXcd H;
@@ -29,23 +37,29 @@ int schrodinger_eq(double t, const double y[], double f[], void *params) {
 }
 
 VectorXcd integrate(const MatrixXcd &H, const VectorXcd &psi0, double t_span,
-                    double t_eval) {
-  gsl_odeiv2_system sys = {schrodinger_eq, nullptr, H.rows() * 2,
-                           new Params{H}};
-  gsl_odeiv2_driver *d = gsl_odeiv2_driver_alloc_y_new(
-      &sys, gsl_odeiv2_step_msadams, 1e-8, 1e-8, 1e-6);
+                    double t_eval, bool use_ode = true) {
   VectorXcd psi = psi0;
-  double y[psi.size() * 2];
-  for (int i = 0; i < psi.size(); ++i) {
-    y[2 * i] = real(psi[i]);
-    y[2 * i + 1] = imag(psi[i]);
+  if (use_ode) {
+    gsl_odeiv2_system sys = {schrodinger_eq, nullptr, H.rows() * 2,
+                             new Params{H}};
+    gsl_odeiv2_driver *d = gsl_odeiv2_driver_alloc_y_new(
+        &sys, gsl_odeiv2_step_msadams, 1e-8, 1e-8, 1e-6);
+    double y[psi.size() * 2];
+    for (int i = 0; i < psi.size(); ++i) {
+      y[2 * i] = real(psi[i]);
+      y[2 * i + 1] = imag(psi[i]);
+    }
+    gsl_odeiv2_driver_apply(d, &t_span, t_eval, y);
+    for (int i = 0; i < psi.size(); ++i) {
+      psi[i] = complex<double>(y[2 * i], y[2 * i + 1]);
+    }
+    gsl_odeiv2_driver_free(d);
+    delete (Params *)sys.params;
+  } else {
+    auto dt = t_eval - t_span;
+    MatrixXcd U = (-1i * H * dt).exp();
+    psi = U * psi;
   }
-  gsl_odeiv2_driver_apply(d, &t_span, t_eval, y);
-  for (int i = 0; i < psi.size(); ++i) {
-    psi[i] = complex<double>(y[2 * i], y[2 * i + 1]);
-  }
-  gsl_odeiv2_driver_free(d);
-  delete (Params *)sys.params;
   return psi;
 }
 
@@ -81,13 +95,12 @@ MatrixXcd determine_jump(const vector<MatrixXcd> &c_ops, const VectorXcd &psi,
 
 vector<VectorXcd> montecarlo(const MatrixXcd &H, const vector<MatrixXcd> &c_ops,
                              const VectorXcd &psi0, const vector<double> &tlist,
-                             unsigned int seed = 0) {
+                             unsigned int seed = 0, bool use_ode = true) {
   if (seed == 0) {
     std::random_device rd;
     seed = rd();
   }
-  std::mt19937 gen(seed);
-  std::uniform_real_distribution<> dis(0.0, 1.0);
+  boost::random::mt19937 gen(seed);
 
   MatrixXcd H_eff = H;
   for (const auto &c_op : c_ops) {
@@ -98,21 +111,21 @@ vector<VectorXcd> montecarlo(const MatrixXcd &H, const vector<MatrixXcd> &c_ops,
   vector<VectorXcd> psi_j;
   psi_j.push_back(psi);
   double t_prev = tlist[0];
-  double r1 = dis(gen);
-  double r2 = dis(gen);
+  double r1 = prand(gen);
+  double r2 = prand(gen);
 
   for (size_t t_idx = 1; t_idx < tlist.size(); ++t_idx) {
     double t_span = t_prev;
     double t_eval = tlist[t_idx];
 
-    psi = integrate(H_eff, psi, t_span, t_eval);
+    psi = integrate(H_eff, psi, t_span, t_eval, use_ode);
 
     double norm_sq = psi.squaredNorm();
     if (norm_sq <= r1) {
       MatrixXcd jump = determine_jump(c_ops, psi, r2);
       psi = jump * psi / (jump * psi).norm();
-      r1 = dis(gen);
-      r2 = dis(gen);
+      r1 = prand(gen);
+      r2 = prand(gen);
     }
 
     t_prev = t_eval;

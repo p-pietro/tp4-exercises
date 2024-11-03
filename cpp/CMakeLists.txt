@@ -9,10 +9,12 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(Eigen3 REQUIRED)
 find_package(GSL REQUIRED)
 find_package(Matplot++ REQUIRED)
+find_package(Boost COMPONENTS random REQUIRED)
 
 include_directories(${EIGEN3_INCLUDE_DIR})
 include_directories(${GSL_INCLUDE_DIRS})
+include_directories( ${Boost_INCLUDE_DIR} )
 
 add_executable(main main.cpp functions.cpp)
 
-target_link_libraries(main ${GSL_LIBRARIES} ${GSL_CBLAS_LIBRARIES} Matplot++::matplot)
+target_link_libraries(main ${GSL_LIBRARIES} ${GSL_CBLAS_LIBRARIES} Matplot++::matplot Boost::random)

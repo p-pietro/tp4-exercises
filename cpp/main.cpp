@@ -100,23 +100,35 @@ int main() {
     times[i] = i * 250.0 / (times.size() - 1);
   }
 
-  auto start_time = high_resolution_clock::now();
-  auto result = montecarlo(H, c_op_list, psi0, times, 42);
-  auto end_time = high_resolution_clock::now();
+  auto start_time1 = high_resolution_clock::now();
+  auto result_ode = montecarlo(H, c_op_list, psi0, times, 42, true);
+  auto end_time1 = high_resolution_clock::now();
   cout << "Time taken using GSL: "
-       << duration_cast<milliseconds>(end_time - start_time).count()
+       << duration_cast<milliseconds>(end_time1 - start_time1).count()
        << " milliseconds" << endl;
 
-  vector<double> norms;
-  for (const auto& psi : result) {
-    norms.push_back(psi.norm());
+  auto start_time2 = high_resolution_clock::now();
+  auto result_exp = montecarlo(H, c_op_list, psi0, times, 42, false);
+  auto end_time2 = high_resolution_clock::now();
+  cout << "Time taken using matrix exponentiation: "
+       << duration_cast<milliseconds>(end_time2 - start_time2).count()
+       << " milliseconds" << endl;
+
+  vector<double> norms_ode;
+  for (const auto& psi : result_ode) {
+    norms_ode.push_back(psi.squaredNorm());
+  }
+  vector<double> norms_exp;
+  for (const auto& psi : result_exp) {
+    norms_exp.push_back(psi.squaredNorm());
   }
 
   using namespace matplot;
 
-  plot(times, norms);
+  plot(times, norms_ode, "-r", times, norms_exp, "-b");
   xlabel("Time");
   ylabel("Norm of psi");
+  legend({"GSL", "Matrix Exponentiation"});
   show();
 
   // Plotting and other operations can be done similarly using appropriate C++
